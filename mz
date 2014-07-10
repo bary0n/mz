@@ -1,0 +1,179 @@
+#!/bin/bash
+#mz-the resurrection of madskillz
+rate=44100
+channels=2
+bits=32
+let sampbytes="(( $channels * $bits / 8 ))"
+soxfmt="--type raw --rate 44100 --channels 2 --bits 32 --encoding floating-point"
+soxtype="-t raw $soxfmt"
+st="$soxtype"
+#ambient mix -> directly mix into output from this point immediately
+#loop-out -> loop for n seconds, fade out for n seconds
+#split -> make split work for byte-aligned files
+#chord -> generate chord for key detection
+#xfade -> linear in, linear out
+#tfade -> drops n-decibels at midpoint; x-fade is -3
+hack(){
+	vi /wiz/mz
+	/wiz/mz >&/dev/null || interrupt "you fucked up" hack 
+}
+interrupt(){
+	echo "$1"
+	echo "hit enter if you agree"
+	read l
+	shift
+	"$@"
+}
+tempo(){
+	stretch -bpm |& tail -5 |head -1 |cut -d' ' -f4 | xargs -I {} /wiz/mz rc $rate*4*60/{}
+}
+dec-file(){
+	dec "$1" >"$2"
+}
+go-file(){
+	go <"$1"
+}
+loop(){
+	( while true ; do 
+		cat "$1"
+	done	) | go
+}
+vl(){
+	TERM="ansi" su user -c "cvlc $@"
+}
+decffg(){
+	i="$1"
+	o="$2"
+	g="$3"
+	shift
+	shift
+	shift
+	decff "$i" "$o" --gain-value "$g"
+}
+decff(){
+	i="$1"
+	o="$2"
+	shift
+	shift
+	su user -c "cvlc -I dummy '$i' --sout '#transcode{acodec=f32l}:std{access=file,mux=raw,dst=/home/user/tmp}' --play-and-exit $*"
+	mv /home/user/tmp "$o"
+}
+
+decss(){
+	c=$(echo "$1" |sed -r 's/[^0-9A-Za-z.]/-/g')
+	cat >"$c"
+	decff "$c" tmp
+	cat tmp
+}
+dec(){
+	sox "$1" $st -
+}
+decg(){
+	sox -G "$1" $st - gain $2
+}
+go(){
+	play $soxfmt - 
+}
+gm(){
+	( save-as gm.wav )
+	mplayer gm.wav
+}
+stretch(){
+	save-as-wav tmp.wav
+	soundstretch tmp.wav "$@"
+	rm tmp.wav
+}
+file(){
+	f=$1
+	shift
+	cat "$f" | /wiz/mz "$@"
+}
+save-as(){
+	sox $soxfmt -t raw - "$@"
+}
+save-as-wav(){
+	save-as --bits 24 --encoding signed-integer "$1"
+}
+rc(){
+	echo "print $@" | ruby
+	echo ""
+}
+go-file-from(){
+	dd if="$1" bs=$sampbytes skip=$2 | go
+}
+samples-per-bar-from-bpm(){
+	tempo=$1
+	let spbfb="(( $rate * 4 * 60 / $tempo ))"
+	echo "$spbfb"
+}
+spbb(){
+	samples-per-bar-from-bpm $1
+}
+split-at(){
+	dd if="$1" of="$1.a" bs="$2" count=1
+	dd if="$1" of="$1.z" bs="$2" skip=1
+}
+split-at-sample(){
+	let sampnum="(( $sampbytes * $2 ))"
+	split-at "$1" "$sampnum"
+}
+stream-via-vlc(){
+	cvlc -vv -I dummy --demux=rawaud --rawaud-fourcc fl32 --rawaud-channels $channels --rawaud-samplerate $rate --no-video - --sout "#std{access=http,mux=ogg,dst=:12345}"
+}
+pick-next(){
+	if [[ -n "$1" ]] ; then
+		ls -1 | grep -A1 "^$1\$" | tail -n 1
+	else
+		ls -1 | head -1
+	fi
+}
+main-loop(){
+	next=""
+	while true ; do
+		next=$(pick-next $next)
+		echo "$next" 1>&2
+		cat "$next"
+	done
+}
+loopy(){
+	echo "not implemented"
+}
+beatgrid-simple(){
+	echo "beatgrid-simple"
+	echo "audio file $1"
+	echo "beatless intro $2 samples long -> a"
+	echo "measures $3 samples long"
+	let intro="(( $2*$sampbytes ))"
+	let measure="(( $3*$sampbytes ))"
+	split-at $1 $intro
+	mv $1.a a
+	mv $1.z z
+	split -a2 -b$measure z split.
+	f=$1
+	shift
+	shift
+	shift
+	ls -1 split.* >f
+	rm l
+	beatgrid-simple-track f $@
+	n=`wc -l <l`
+	seq -w 1 $n >s
+	paste s l >g
+	sed -r 's/^([^\t]+)\t(.*)$/cat \2 >s\1/g' g >go
+	bash go
+}
+beatgrid-simple-track(){
+	head-tail $1 $2 
+	cat $1.h | xargs >>l
+	mv $1.t $1
+	f=$1
+	shift
+	shift
+	[[ -z "$@" ]] || beatgrid-simple-track $f $@
+}
+head-tail(){
+	head -n $2 $1 >$1.h
+	let t="(( $2+1 ))"
+	tail -n +$t $1 >$1.t
+}
+[[ -z "$@" ]] || "$@"
